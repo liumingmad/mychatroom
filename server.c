@@ -20,9 +20,12 @@ void do_message(char*);
 void print_client_list(struct client *head);
 void add_client(struct client *head, int fd, struct sockaddr_in addr);
 void remove_client(struct client *head, int fd);
+const char* parse_cmd(char *buf);
+void handle_signal(int listenfd);
 
 
 int main(int argc, char* argv[]) {
+
     // create head node, fd is -1.
     struct client *c = malloc(sizeof(struct client));
     c->fd = -1;
@@ -35,6 +38,8 @@ int main(int argc, char* argv[]) {
 
     int listenfd = Socket(AF_INET, SOCK_STREAM, 0);
     printf("listen fd=%d\n", listenfd);
+
+    // on_exit(handle_signal, (void*)&listenfd);
     
     struct sockaddr_in servaddr;
     bzero((void*)&servaddr, sizeof(servaddr));
@@ -87,6 +92,10 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+void handle_signal(int listenfd) {
+    printf("nani exit listenfd is %d....\n", listenfd);
+}
+
 int hendle_request(int fd) {
     char buf[MAX_BUF_SIZE];
     bzero(buf, MAX_BUF_SIZE);
@@ -99,9 +108,37 @@ int hendle_request(int fd) {
 }
 
 void do_message(char *buf) {
-    for (char *p=buf; *p; p++) {
-        *p = toupper(*p);
+    const char* cmd = parse_cmd(buf);
+    if (strcmp(cmd, "SIGN_UP") == 0) {
+        printf("SIGN_UP\n");
+
+    } else if (strcmp(cmd, "SIGN_IN") == 0) {
+    } else if (strcmp(cmd, "SIGN_OUT") == 0) {
+    } else if (strcmp(cmd, "EXIT") == 0) {
+
+    } else if (strcmp(cmd, "LIST_ROOM") == 0) {
+    } else if (strcmp(cmd, "ENTER_ROOM") == 0) {
+    } else if (strcmp(cmd, "EXIT_ROOM") == 0) {
+
+    } else if (strcmp(cmd, "CREATE_ROOM") == 0) {
+    } else if (strcmp(cmd, "DELETE_ROOM") == 0) {
+
+    } else {
+        printf("unknow command!\n");
     }
+}
+
+const char* parse_cmd(char *buf) {
+    while (isspace(*buf)) buf++;
+    char *p = buf;
+    for (; *p; p++) {
+        if (isspace(*p)) break;
+    }
+    int n = p - buf;
+    char *cmd = malloc(n+1); 
+    bzero(cmd, n+1);
+    strncpy(cmd, buf, n);
+    return cmd;
 }
 
 void add_client(struct client *head, int fd, struct sockaddr_in addr) {
