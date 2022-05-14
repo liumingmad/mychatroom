@@ -48,6 +48,9 @@ void show_room_list(struct room *head);
 void do_create_room(int fd, struct room *head, char *name, int limit);
 void do_delete_room(int fd, struct room *head, int room_id);
 void do_list_room(int fd, struct room *head);
+void do_enter_room(int fd, struct room *head, int room_id);
+void do_exit_room(int fd, struct room *head, int room_id);
+struct room* find_room(struct room *head, int room_id);
 
 // 未登录用户链表
 static struct client *g_client_head;
@@ -174,8 +177,9 @@ void do_message(char *buf, int n, int fd) {
         do_list_room(fd, g_room_head);
 
     } else if (strcmp(cmd[0], "ENTER_ROOM") == 0) {
+        do_enter_room(fd, g_room_head, atoi(cmd[1]));
     } else if (strcmp(cmd[0], "EXIT_ROOM") == 0) {
-
+        do_exit_room(fd, g_room_head, atoi(cmd[1]));
 
     } else if (strcmp(cmd[0], "SEND_MSG") == 0) {
         // 转发到room中每个用户
@@ -298,7 +302,6 @@ void save_user(struct user *users, char *name, char *passwd) {
     strncpy(p->name, name, strnlen(name, 100));
     strncpy(p->password, passwd, strnlen(passwd, 100));
     p->role = p->id == 0 ? 0 : 1;
-    p->online = 0;
     g_user_size++;
 }
 
@@ -366,7 +369,19 @@ void do_create_room(int fd, struct room *head, char *name, int limit) {
         return;
     }
 
-    // 2. 添加room到列表
+    // 2. 是否重复
+    struct room *h = head->next;
+    while (h) {
+        if (strncmp(h->name, name, strlen(h->name)) == 0) {
+            char s[100];
+            sprintf(s, "%s room has exist", name);
+            response(fd, 400, s);
+            return;
+        }
+        h = h->next;
+    }
+
+    // 3. 添加room到列表
     struct room *r = malloc(sizeof(struct room));
     r->id = g_room_id++; 
     strncpy(r->name, name, strlen(name) + 1);
@@ -446,4 +461,67 @@ void do_list_room(int fd, struct room *head) {
     }
     response(fd, -1, buf);
     free(buf);
+}
+
+void do_enter_room(int fd, struct room *head, int room_id) {
+    char resp[100];
+    struct room * p = find_room(head, room_id);
+    if (p == NULL) {
+        sprintf(resp, "%d room not exist!", room_id);
+        response(fd, 400, resp);
+        return;
+    }
+
+    struct client *cli = find_client(fd);
+    struct user_node *one = malloc(sizeof(struct user_node));
+    one->usr = cli->usr;
+    one->next = NULL;
+
+    // no body in room
+    if (p->list == NULL) {
+        p->list = one;
+        response(fd, 200,  "enter room success");
+        return;
+    }
+
+    struct user_node *pre = NULL; 
+    struct user_node *node = p->list; 
+    while (node) {
+        if (node->usr->id == cli->usr->id) {
+            response(fd, 200,  "you has in room");
+            return;
+        } 
+        pre = node;
+        node = node->next;
+    }
+    pre->next = one; 
+    response(fd, 200, "");
+}
+
+void do_exit_room(int fd, struct room *head, int room_id) {
+    struct client *cli = find_client(fd);
+    struct room *r = find_room(head, room_id);
+    struct user_node *pre = NULL;
+    struct user_node *p = r->list;
+    while (p) {
+        if (p->usr->id == cli->usr->id) {
+            if (pre) pre->next = p->next;
+            p->next = NULL;
+            response(fd, 200, "exit room success");
+            return;
+        }
+        pre = p;
+        p = p->next;
+    }
+    response(fd, 200, "you not in this room");
+    return;
+}
+
+struct room* find_room(struct room *head, int room_id) {
+    struct room *p = head;
+    while (p) {
+        if (p->id == room_id) return p;
+        p = p->next;
+    }
+    return NULL;
 }

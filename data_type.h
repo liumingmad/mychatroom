@@ -19,7 +19,6 @@ struct user
     int role;
     char name[20];
     char password[100];
-    int online;         // for SIGN_IN/SIGN_OUT
 };
 
 struct client {
