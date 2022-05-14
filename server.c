@@ -2,6 +2,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -14,32 +15,37 @@
 #define MAX_CLIENT_SIZE 100
 #define MAX_BUF_SIZE 100
 
-int hendle_request(int);
-void do_message(char*);
+int init();
+int handle_request(int);
+void do_message(char*, int);
 
 void print_client_list(struct client *head);
 void add_client(struct client *head, int fd, struct sockaddr_in addr);
 void remove_client(struct client *head, int fd);
-const char* parse_cmd(char *buf);
-void handle_signal(int listenfd);
+char** parse_cmd(char *buf, int n);
+void handle_signal(int signal);
+
+void do_signup(struct user *users, char *name, char *passwd);
+int check_user(struct user *users, int len, char *name);
+void save_user(struct user *users, char *name, char *passwd);
+void show_user(struct user *users, int len);
+
+static struct client *g_client_head;
+static struct room *g_room_head;
+static struct user g_users[100];
+static int g_user_size = 0;
 
 
 int main(int argc, char* argv[]) {
-
-    // create head node, fd is -1.
-    struct client *c = malloc(sizeof(struct client));
-    c->fd = -1;
-    c->next = NULL;
-    struct client *client_head = c;
-
-    struct room *room_head = NULL;
-    struct user users[100];
-
+    init();
 
     int listenfd = Socket(AF_INET, SOCK_STREAM, 0);
     printf("listen fd=%d\n", listenfd);
 
+    int opt = 1;
+    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     // on_exit(handle_signal, (void*)&listenfd);
+    // signal(SIGINT, handle_signal);
     
     struct sockaddr_in servaddr;
     bzero((void*)&servaddr, sizeof(servaddr));
@@ -75,13 +81,13 @@ int main(int argc, char* argv[]) {
                     ev.events = EPOLLIN;
                     ev.data.fd = clientfd;
                     Epoll_ctl(epfd, EPOLL_CTL_ADD, clientfd, &ev);
-                    add_client(client_head, clientfd, clientaddr);
+                    add_client(g_client_head, clientfd, clientaddr);
 
                 } else {
-                    if (hendle_request(fd) == 0) {
+                    if (handle_request(fd) == 0) {
                         Epoll_ctl(epfd, EPOLL_CTL_DEL, fd, &ev);
                         Close(fd);
-                        remove_client(client_head, fd);
+                        remove_client(g_client_head, fd);
                         printf("client exit fd=%d\n", fd);
                     }
                 }
@@ -92,53 +98,81 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-void handle_signal(int listenfd) {
-    printf("nani exit listenfd is %d....\n", listenfd);
+int init() {
+    // create head node, fd is -1.
+    struct client *c = malloc(sizeof(struct client));
+    c->fd = -1;
+    c->addr = NULL;
+    c->next = NULL;
+    g_client_head = c;
+
+    // room_head
+
+    // user
+    g_user_size = 0;
 }
 
-int hendle_request(int fd) {
+void handle_signal(int signal) {
+    printf("recv signal is %d....\n", signal);
+    exit(0);
+}
+
+int handle_request(int fd) {
     char buf[MAX_BUF_SIZE];
     bzero(buf, MAX_BUF_SIZE);
     int n = Read(fd, buf, MAX_BUF_SIZE);
     if (n > 0) {
-        do_message(buf);
+        do_message(buf, n);
         Write(fd, buf, n);
     }
     return n;
 }
 
-void do_message(char *buf) {
-    const char* cmd = parse_cmd(buf);
-    if (strcmp(cmd, "SIGN_UP") == 0) {
-        printf("SIGN_UP\n");
+void do_message(char *buf, int n) {
+    char** cmd = parse_cmd(buf, n);
+    if (strcmp(cmd[0], "SIGN_UP") == 0) {
+        do_signup(g_users, cmd[1], cmd[2]);
+        show_user(g_users, g_user_size);
 
-    } else if (strcmp(cmd, "SIGN_IN") == 0) {
-    } else if (strcmp(cmd, "SIGN_OUT") == 0) {
-    } else if (strcmp(cmd, "EXIT") == 0) {
+    } else if (strcmp(cmd[0], "SIGN_IN") == 0) {
+    } else if (strcmp(cmd[0], "SIGN_OUT") == 0) {
+    } else if (strcmp(cmd[0], "EXIT") == 0) {
 
-    } else if (strcmp(cmd, "LIST_ROOM") == 0) {
-    } else if (strcmp(cmd, "ENTER_ROOM") == 0) {
-    } else if (strcmp(cmd, "EXIT_ROOM") == 0) {
+    } else if (strcmp(cmd[0], "LIST_ROOM") == 0) {
+    } else if (strcmp(cmd[0], "ENTER_ROOM") == 0) {
+    } else if (strcmp(cmd[0], "EXIT_ROOM") == 0) {
 
-    } else if (strcmp(cmd, "CREATE_ROOM") == 0) {
-    } else if (strcmp(cmd, "DELETE_ROOM") == 0) {
+    } else if (strcmp(cmd[0], "CREATE_ROOM") == 0) {
+    } else if (strcmp(cmd[0], "DELETE_ROOM") == 0) {
 
     } else {
         printf("unknow command!\n");
     }
 }
 
-const char* parse_cmd(char *buf) {
-    while (isspace(*buf)) buf++;
-    char *p = buf;
-    for (; *p; p++) {
-        if (isspace(*p)) break;
+char** parse_cmd(char *src, int len) {
+    int size = 10 * sizeof(char*);
+    char** res = malloc(size);
+    bzero(res, size);
+    int i = 0;
+    char *begin = NULL;
+    for (char *p=src; p<(src+len); p++) {
+        if (isspace(*p)) {
+            if (begin != NULL) {
+                int n = p - begin;
+                res[i] = malloc(n+1);
+                bzero(res[i], n+1);
+                strncpy(res[i], begin, n);
+                begin = NULL;
+                i++;
+            }
+        } else {
+            if (begin == NULL) {
+                begin = p;
+            }
+        }
     }
-    int n = p - buf;
-    char *cmd = malloc(n+1); 
-    bzero(cmd, n+1);
-    strncpy(cmd, buf, n);
-    return cmd;
+    return res;
 }
 
 void add_client(struct client *head, int fd, struct sockaddr_in addr) {
@@ -184,5 +218,38 @@ void print_client_list(struct client *head) {
         int port = ntohs(p->addr->sin_port);
         printf("(%d %s:%d)-->\n", p->fd, host, port);
         p = p->next;
+    }
+}
+
+void do_signup(struct user *users, char *name, char *passwd) {
+    if (!check_user(users, g_user_size, name)) {
+        printf("Error: name has exist!\n");
+        return; 
+    }
+    save_user(users, name, passwd);
+}
+
+int check_user(struct user *users, int len, char *name) {
+    for (int i=0; i<len; i++) {
+        if (strncmp(users->name, name, strlen(users->name)) == 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void save_user(struct user *users, char *name, char *passwd) {
+    struct user *p = users + g_user_size; 
+    p->id = g_user_size;  
+    strncpy(p->name, name, strnlen(name, 100));
+    strncpy(p->password, passwd, strnlen(passwd, 100));
+    p->role = p->id == 0 ? 0 : 1;
+    p->online = 0;
+    g_user_size++;
+}
+
+void show_user(struct user *users, int len) {
+    for (int i=0; i<len; i++) {
+        printf("%d %s %s\n", users[i].id, users[i].name, users[i].password);
     }
 }

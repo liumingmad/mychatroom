@@ -5,7 +5,7 @@
 4xx 指令语法错误, 执行失败
 5xx 服务器错误
 
-SIGN_UP username
+SIGN_UP username password
 200 user_id role message
 
 SIGN_IN username password

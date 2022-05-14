@@ -4,8 +4,7 @@ struct room
     int id;
     char name[20];
     int limit;
-    struct user *head;
-    struct room *next;
+    struct user *list;
 };
 
 struct user
@@ -14,7 +13,7 @@ struct user
     int role;
     char name[20];
     char password[100];
-    struct user *next;
+    int online;         // for SIGN_IN/SIGN_OUT
 };
 
 struct client {
