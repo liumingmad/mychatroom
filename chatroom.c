@@ -45,8 +45,9 @@ void do_signout(int fd);
 
 // 创建/删除/显示 room
 void show_room_list(struct room *head);
-void create_room(int fd, struct room *head, char *name, int limit);
-void delete_room(int fd, struct room *head, int room_id);
+void do_create_room(int fd, struct room *head, char *name, int limit);
+void do_delete_room(int fd, struct room *head, int room_id);
+void do_list_room(int fd, struct room *head);
 
 // 未登录用户链表
 static struct client *g_client_head;
@@ -165,14 +166,16 @@ void do_message(char *buf, int n, int fd) {
     } else if (strcmp(cmd[0], "SIGN_OUT") == 0) {
         do_signout(fd);
 
+    } else if (strcmp(cmd[0], "CREATE_ROOM") == 0) {
+        do_create_room(fd, g_room_head, cmd[1], atoi(cmd[2]));
+    } else if (strcmp(cmd[0], "DELETE_ROOM") == 0) {
+        do_delete_room(fd, g_room_head, atoi(cmd[1]));
     } else if (strcmp(cmd[0], "LIST_ROOM") == 0) {
+        do_list_room(fd, g_room_head);
+
     } else if (strcmp(cmd[0], "ENTER_ROOM") == 0) {
     } else if (strcmp(cmd[0], "EXIT_ROOM") == 0) {
 
-    } else if (strcmp(cmd[0], "CREATE_ROOM") == 0) {
-        create_room(fd, g_room_head, cmd[1], atoi(cmd[2]));
-    } else if (strcmp(cmd[0], "DELETE_ROOM") == 0) {
-        delete_room(fd, g_room_head, atoi(cmd[1]));
 
     } else if (strcmp(cmd[0], "SEND_MSG") == 0) {
         // 转发到room中每个用户
@@ -262,12 +265,12 @@ void print_client_list(struct client *head) {
 }
 
 void response(int fd, int code, const char *msg) {
-    char s[100];
-    bzero(s, 100);
-    itoa(code, s);
-    strcat(s, " ");
-    strcat(s, msg);
-    strcat(s, "\n");
+    char s[500];
+    if (code < 0) {
+        sprintf(s, "%s\n", msg);
+    } else {
+        sprintf(s, "%d %s\n", code, msg);
+    }
     Write(fd, s, strlen(s));
 }
 
@@ -306,6 +309,7 @@ void show_user(struct user *users, int len) {
 }
 
 void do_signin(int fd, struct user *users, char *name, char *passwd) {
+    char resp_str[100];
     for (int i=0; i<g_user_size; i++) {
         struct user *p = &users[i];
         if (strncmp(name, p->name, strlen(p->name)) == 0) {
@@ -314,26 +318,18 @@ void do_signin(int fd, struct user *users, char *name, char *passwd) {
                 if (cli == NULL) printf("do_sigin() client not exist");  
                 cli->usr = p;
 
-                int len = 50;
-                char s[len];
-                bzero(s, len);
-                strncat(s, "Welcome ", len);
-                strncat(s, name, len);
-                strncat(s, ", sign in success.", len);
-                response(fd, 200, s); 
+                sprintf(resp_str, "Welcome %s, sign in success.", name);
+                response(fd, 200, resp_str); 
 
             } else {
-                int len = 50;
-                char s[len];
-                bzero(s, len);
-                strncat(s, "password is error, ", len);
-                strncat(s, name, len);
-                response(fd, 400, s); 
+                sprintf(resp_str, "password is error, %s", name);
+                response(fd, 400, resp_str); 
             }
             return;
         } 
     }
-    response(fd, 400, strcat(name, " is not exist, please sign up.")); 
+    sprintf(resp_str, "%s is not exist, please sign up.", name);
+    response(fd, 400, resp_str); 
 }
 
 void do_signout(int fd) {
@@ -351,11 +347,8 @@ void do_signout(int fd) {
     char *name = p->usr->name;
     p->usr = NULL;
 
-    int len = 50;
-    char s[len];
-    bzero(s, len);
-    strncat(s, "Goodbye ", len);
-    strncat(s, name, len);
+    char s[50];
+    sprintf(s, "Goodbye %s", name);
     response(fd, 200, s); 
 }
 
@@ -365,7 +358,7 @@ struct client * find_client(int fd) {
     return p;
 }
 
-void create_room(int fd, struct room *head, char *name, int limit) {
+void do_create_room(int fd, struct room *head, char *name, int limit) {
     // 1. 检查权限
     struct client *cli = find_client(fd);
     if (cli->usr->role > 0) {
@@ -385,22 +378,14 @@ void create_room(int fd, struct room *head, char *name, int limit) {
     while (p && p->next) p = p->next;
     p->next = r;
 
-    int len = 100;
-    char s[len];
-    bzero(s, len);
-    strncat(s,  "create room success, room id is ", len);
-
-    char val[10];
-    bzero(val, 10);
-    itoa(r->id, val);
-    strncat(s, val, 10);
-
+    char s[100];
+    sprintf(s, "create room success, room id is %d", r->id);
     response(fd, 200, s);
 
-    if (DEBUG) show_room_list(head);
+    // if (DEBUG) show_room_list(head);
 }
 
-void delete_room(int fd, struct room *head, int room_id) {
+void do_delete_room(int fd, struct room *head, int room_id) {
     struct room *pre = head;
     struct room *p = head->next;
     while (p) {
@@ -422,7 +407,7 @@ void delete_room(int fd, struct room *head, int room_id) {
     free(p);
     response(fd, 200, "delete room success");
 
-    if (DEBUG) show_room_list(head);
+    // if (DEBUG) show_room_list(head);
 }
 
 void show_room_list(struct room *head) {
@@ -447,4 +432,18 @@ int get_room_list_size(struct room *head) {
         p = p->next;
     }
     return cnt;
+}
+
+void do_list_room(int fd, struct room *head) {
+    char* buf = malloc(1024);
+    bzero(buf, 1024);
+    char* s = buf;
+    struct room *p = head->next; 
+    while (p) {
+        int len = sprintf(s, "%d %s %d\n", p->id, p->name, p->limit);
+        s += len;
+        p = p->next;
+    }
+    response(fd, -1, buf);
+    free(buf);
 }
