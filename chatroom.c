@@ -301,6 +301,7 @@ void do_signin(int fd, struct user *users, char *name, char *passwd) {
                 bzero(s, len);
                 strncat(s, "Welcome ", len);
                 strncat(s, name, len);
+                strncat(s, ", sign in success.", len);
                 response(fd, 200, s); 
 
             } else {
@@ -314,7 +315,25 @@ void do_signin(int fd, struct user *users, char *name, char *passwd) {
 
 void do_signout(int fd) {
     struct client *p = find_client(fd);
+    if (p == NULL) {
+        response(fd, 500, "No connection");
+        return;
+    }
+
+    if (p->usr == NULL) {
+        response(fd, 401, "Not sign in.");
+        return;
+    }
+
+    char *name = p->usr->name;
     p->usr = NULL;
+
+    int len = 50;
+    char s[len];
+    bzero(s, len);
+    strncat(s, "Goodbye ", len);
+    strncat(s, name, len);
+    response(fd, 200, s); 
 }
 
 struct client * find_client(int fd) {
