@@ -10,6 +10,7 @@ struct room
 struct user
 {
     int id;
+    int fd;
     int role;
     char name[20];
     char password[100];
@@ -18,6 +19,7 @@ struct user
 
 struct client {
     int fd;
+    struct user *usr;
     struct sockaddr_in *addr;
     struct client *next;
 };

@@ -36,6 +36,10 @@ int check_user(struct user *users, int len, char *name);
 void save_user(struct user *users, char *name, char *passwd);
 void show_user(struct user *users, int len);
 
+void do_signin(int fd, struct user *users, char *name, char *passwd);
+void do_signout(int fd);
+struct client * find_client(int fd);
+
 
 static struct client *g_client_head;
 static struct room *g_room_head;
@@ -139,9 +143,11 @@ void do_message(char *buf, int n, int fd) {
     char** cmd = parse_cmd(buf, n);
     if (strcmp(cmd[0], "SIGN_UP") == 0) {
         do_signup(fd, g_users, cmd[1], cmd[2]);
-
     } else if (strcmp(cmd[0], "SIGN_IN") == 0) {
+        do_signin(fd, g_users, cmd[1], cmd[2]);
     } else if (strcmp(cmd[0], "SIGN_OUT") == 0) {
+        do_signout(fd);
+
     } else if (strcmp(cmd[0], "EXIT") == 0) {
 
     } else if (strcmp(cmd[0], "LIST_ROOM") == 0) {
@@ -267,7 +273,7 @@ int check_user(struct user *users, int len, char *name) {
 
 void save_user(struct user *users, char *name, char *passwd) {
     struct user *p = users + g_user_size; 
-    p->id = g_user_size;  
+    p->id = g_user_size;
     strncpy(p->name, name, strnlen(name, 100));
     strncpy(p->password, passwd, strnlen(passwd, 100));
     p->role = p->id == 0 ? 0 : 1;
@@ -279,4 +285,40 @@ void show_user(struct user *users, int len) {
     for (int i=0; i<len; i++) {
         printf("%d %s %s\n", users[i].id, users[i].name, users[i].password);
     }
+}
+
+void do_signin(int fd, struct user *users, char *name, char *passwd) {
+    for (int i=0; i<g_user_size; i++) {
+        struct user *p = &users[i];
+        if (strncmp(name, p->name, strlen(p->name)) == 0) {
+            if (strncmp(passwd, p->password, strlen(p->password)) == 0) {
+                struct client *cli = find_client(fd);
+                if (cli == NULL) printf("do_sigin() client not exist");  
+                cli->usr = p;
+
+                int len = 50;
+                char s[len];
+                bzero(s, len);
+                strncat(s, "Welcome ", len);
+                strncat(s, name, len);
+                response(fd, 200, s); 
+
+            } else {
+                response(fd, 400, strcat("password is error, ", name)); 
+            }
+            return;
+        } 
+    }
+    response(fd, 400, strcat(name, " is not exist, please sign up.")); 
+}
+
+void do_signout(int fd) {
+    struct client *p = find_client(fd);
+    p->usr = NULL;
+}
+
+struct client * find_client(int fd) {
+    struct client *p = g_client_head;
+    while (p && (fd != p->fd)) p = p->next;
+    return p;
 }
