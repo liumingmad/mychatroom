@@ -1,2 +1,5 @@
 .vscode/
 a.out
+chatroom
+core
+*.o

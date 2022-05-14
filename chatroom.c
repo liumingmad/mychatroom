@@ -9,26 +9,33 @@
 
 #include "wrap.h"
 #include "data_type.h"
+#include "utils.h"
 
 #define DEBUG 1
 #define SERV_PORT 8010
 #define MAX_CLIENT_SIZE 100
 #define MAX_BUF_SIZE 100
+// SIGN_UP name passwd    size is 3
+#define MAX_CMD_SIZE 10
+
 
 int init();
 int handle_request(int);
-void do_message(char*, int);
+void do_message(char*, int, int);
+void response(int fd, int code, const char *msg);
 
 void print_client_list(struct client *head);
 void add_client(struct client *head, int fd, struct sockaddr_in addr);
 void remove_client(struct client *head, int fd);
 char** parse_cmd(char *buf, int n);
+void unparse_cmd(char** cmd);
 void handle_signal(int signal);
 
-void do_signup(struct user *users, char *name, char *passwd);
+void do_signup(int fd, struct user *users, char *name, char *passwd);
 int check_user(struct user *users, int len, char *name);
 void save_user(struct user *users, char *name, char *passwd);
 void show_user(struct user *users, int len);
+
 
 static struct client *g_client_head;
 static struct room *g_room_head;
@@ -122,17 +129,16 @@ int handle_request(int fd) {
     bzero(buf, MAX_BUF_SIZE);
     int n = Read(fd, buf, MAX_BUF_SIZE);
     if (n > 0) {
-        do_message(buf, n);
-        Write(fd, buf, n);
+        do_message(buf, n, fd);
+        //Write(fd, resp, n);
     }
     return n;
 }
 
-void do_message(char *buf, int n) {
+void do_message(char *buf, int n, int fd) {
     char** cmd = parse_cmd(buf, n);
     if (strcmp(cmd[0], "SIGN_UP") == 0) {
-        do_signup(g_users, cmd[1], cmd[2]);
-        show_user(g_users, g_user_size);
+        do_signup(fd, g_users, cmd[1], cmd[2]);
 
     } else if (strcmp(cmd[0], "SIGN_IN") == 0) {
     } else if (strcmp(cmd[0], "SIGN_OUT") == 0) {
@@ -144,14 +150,24 @@ void do_message(char *buf, int n) {
 
     } else if (strcmp(cmd[0], "CREATE_ROOM") == 0) {
     } else if (strcmp(cmd[0], "DELETE_ROOM") == 0) {
-
+    } else if (strcmp(cmd[0], "SEND_MSG") == 0) {
+        // 转发到room中每个用户
     } else {
         printf("unknow command!\n");
     }
+
+    unparse_cmd(cmd);
+}
+
+void unparse_cmd(char** cmd) {
+    for (int i=0; i<MAX_CMD_SIZE; i++) {
+        free(cmd[i]);
+    }
+    free(cmd);
 }
 
 char** parse_cmd(char *src, int len) {
-    int size = 10 * sizeof(char*);
+    int size = MAX_CMD_SIZE * sizeof(char*);
     char** res = malloc(size);
     bzero(res, size);
     int i = 0;
@@ -221,12 +237,23 @@ void print_client_list(struct client *head) {
     }
 }
 
-void do_signup(struct user *users, char *name, char *passwd) {
+void response(int fd, int code, const char *msg) {
+    char s[100];
+    bzero(s, 100);
+    itoa(code, s);
+    strcat(s, " ");
+    strcat(s, msg);
+    strcat(s, "\n");
+    Write(fd, s, strlen(s));
+}
+
+void do_signup(int fd, struct user *users, char *name, char *passwd) {
     if (!check_user(users, g_user_size, name)) {
-        printf("Error: name has exist!\n");
-        return; 
+        response(fd, 400, "user has exist");
+        return;
     }
     save_user(users, name, passwd);
+    response(fd, 200, "SIGN_UP success");
 }
 
 int check_user(struct user *users, int len, char *name) {
