@@ -14,9 +14,6 @@ SIGN_IN username password
 SIGN_OUT 
 200 message
 
-EXIT
-200 message
-
 LIST_ROOM 
 200 message
 roomid1 roomname1

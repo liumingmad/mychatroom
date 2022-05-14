@@ -18,31 +18,44 @@
 // SIGN_UP name passwd    size is 3
 #define MAX_CMD_SIZE 10
 
-
+// 初始化
 int init();
+void handle_signal(int signal);
+
+// 请求／回复
 int handle_request(int);
 void do_message(char*, int, int);
+char** parse_cmd(char *buf, int n);
+void unparse_cmd(char** cmd);
 void response(int fd, int code, const char *msg);
 
+// 未登入的客户端
 void print_client_list(struct client *head);
 void add_client(struct client *head, int fd, struct sockaddr_in addr);
 void remove_client(struct client *head, int fd);
-char** parse_cmd(char *buf, int n);
-void unparse_cmd(char** cmd);
-void handle_signal(int signal);
+struct client * find_client(int fd);
 
+// 注册/登入/登出
 void do_signup(int fd, struct user *users, char *name, char *passwd);
 int check_user(struct user *users, int len, char *name);
 void save_user(struct user *users, char *name, char *passwd);
 void show_user(struct user *users, int len);
-
 void do_signin(int fd, struct user *users, char *name, char *passwd);
 void do_signout(int fd);
-struct client * find_client(int fd);
 
+// 创建/删除/显示 room
+void show_room_list(struct room *head);
+void create_room(int fd, struct room *head, char *name, int limit);
+void delete_room(int fd, struct room *head, int room_id);
 
+// 未登录用户链表
 static struct client *g_client_head;
+
+// room 链表
+static int g_room_id = 0; // 自增id
 static struct room *g_room_head;
+
+// user数组
 static struct user g_users[100];
 static int g_user_size = 0;
 
@@ -118,6 +131,10 @@ int init() {
     g_client_head = c;
 
     // room_head
+    struct room *r = malloc(sizeof(struct room));
+    r->id = -1;
+    r->next = NULL;
+    g_room_head = r;
 
     // user
     g_user_size = 0;
@@ -148,14 +165,15 @@ void do_message(char *buf, int n, int fd) {
     } else if (strcmp(cmd[0], "SIGN_OUT") == 0) {
         do_signout(fd);
 
-    } else if (strcmp(cmd[0], "EXIT") == 0) {
-
     } else if (strcmp(cmd[0], "LIST_ROOM") == 0) {
     } else if (strcmp(cmd[0], "ENTER_ROOM") == 0) {
     } else if (strcmp(cmd[0], "EXIT_ROOM") == 0) {
 
     } else if (strcmp(cmd[0], "CREATE_ROOM") == 0) {
+        create_room(fd, g_room_head, cmd[1], atoi(cmd[2]));
     } else if (strcmp(cmd[0], "DELETE_ROOM") == 0) {
+        delete_room(fd, g_room_head, atoi(cmd[1]));
+
     } else if (strcmp(cmd[0], "SEND_MSG") == 0) {
         // 转发到room中每个用户
     } else {
@@ -305,7 +323,12 @@ void do_signin(int fd, struct user *users, char *name, char *passwd) {
                 response(fd, 200, s); 
 
             } else {
-                response(fd, 400, strcat("password is error, ", name)); 
+                int len = 50;
+                char s[len];
+                bzero(s, len);
+                strncat(s, "password is error, ", len);
+                strncat(s, name, len);
+                response(fd, 400, s); 
             }
             return;
         } 
@@ -340,4 +363,88 @@ struct client * find_client(int fd) {
     struct client *p = g_client_head;
     while (p && (fd != p->fd)) p = p->next;
     return p;
+}
+
+void create_room(int fd, struct room *head, char *name, int limit) {
+    // 1. 检查权限
+    struct client *cli = find_client(fd);
+    if (cli->usr->role > 0) {
+        response(fd, 400, "Permission denied");
+        return;
+    }
+
+    // 2. 添加room到列表
+    struct room *r = malloc(sizeof(struct room));
+    r->id = g_room_id++; 
+    strncpy(r->name, name, strlen(name) + 1);
+    r->limit = limit;
+    r->list = NULL;
+    r->next = NULL;
+    
+    struct room *p = head;
+    while (p && p->next) p = p->next;
+    p->next = r;
+
+    int len = 100;
+    char s[len];
+    bzero(s, len);
+    strncat(s,  "create room success, room id is ", len);
+
+    char val[10];
+    bzero(val, 10);
+    itoa(r->id, val);
+    strncat(s, val, 10);
+
+    response(fd, 200, s);
+
+    if (DEBUG) show_room_list(head);
+}
+
+void delete_room(int fd, struct room *head, int room_id) {
+    struct room *pre = head;
+    struct room *p = head->next;
+    while (p) {
+        if (p->id == room_id) {
+            if (pre) pre->next = p->next; 
+            p->next = NULL;
+            break;
+        }
+        pre = p;
+        p = p->next;
+    }
+
+    if (p == NULL) {
+        response(fd, 400, "room id not exist");
+        return;
+    }
+
+    p->list = NULL;
+    free(p);
+    response(fd, 200, "delete room success");
+
+    if (DEBUG) show_room_list(head);
+}
+
+void show_room_list(struct room *head) {
+    struct room *p = head->next;
+    while (p) {
+        printf("%d %s %d \n", p->id, p->name, p->limit);
+        struct user_node *u = p->list;
+        while (u) {
+            printf("\t(%s)\n", u->usr->name);
+            u = u->next;
+        }
+        p = p->next;
+    }
+
+}
+
+int get_room_list_size(struct room *head) {
+    int cnt = 0;
+    struct room *p = head->next;
+    while (p) {
+        cnt++;
+        p = p->next;
+    }
+    return cnt;
 }
