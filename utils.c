@@ -60,3 +60,13 @@ void free_split(struct Node *head) {
         p = p->next;
     }
 }
+
+char* to_upper(char *s) {
+    char *p = s;
+    while ((*p) != '\0') {
+        if ((*p) >= 'a' && (*p) <='z') {
+            *p -= 'a' - 'A';
+        }
+        p++;
+    }
+}

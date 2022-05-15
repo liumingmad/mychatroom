@@ -39,14 +39,12 @@ void response(int fd, int code, const char *msg);
 void print_client_list(struct client *head);
 void add_client(struct client *head, int fd, struct sockaddr_in addr);
 void remove_client(struct client *head, int fd);
-struct client * find_client(int fd);
+struct client* find_client(int fd);
 
 // 注册/登入/登出
 void do_signup(int fd, struct user **users, char *name, char *passwd);
 void do_signin(int fd, struct user **users, char *name, char *passwd);
 void do_signout(int fd);
-int check_user(struct user **users, int len, char *name);
-void save_user(struct user **users, char *name, char *passwd);
 void show_user(struct user **users, int len);
 struct user* find_user(struct user **users, int id);
 int check_signin(int fd);
@@ -60,6 +58,10 @@ void do_enter_room(int fd, struct room *head, int room_id);
 void do_exit_room(int fd, struct room *head, int room_id);
 struct room* find_room(struct room *head, int room_id);
 void gen_user_list_str(struct user_node *head, char *s);
+int get_room_user_count(struct room *r);
+
+// 在自己所在的room中发消息
+void do_send_msg(int fd, char *msg);
 
 // 未登录用户链表
 static struct client *g_client_head;
@@ -218,20 +220,22 @@ struct room * load_room_from_file(char* path) {
         one->limit = atoi(p->str);
         p = p->next;
         // user list
-        struct user_node *usr_p = NULL;
-        struct Node *uid_p = split(p->str, ',');
-        while (uid_p) {
-            struct user_node *usr_one = malloc(sizeof(struct user_node));
-            usr_one->usr = find_user(g_users, atoi(uid_p->str)); 
-            usr_one->next = NULL;
-            if (usr_p == NULL) {
-                usr_p = usr_one;
-                one->list = usr_p;
-            } else {
-                usr_p->next = usr_one;
-                usr_p = usr_p->next;
+        if (strlen(p->str) > 0) {
+            struct user_node *usr_p = NULL;
+            struct Node *uid_p = split(p->str, ',');
+            while (uid_p) {
+                struct user_node *usr_one = malloc(sizeof(struct user_node));
+                usr_one->usr = find_user(g_users, atoi(uid_p->str)); 
+                usr_one->next = NULL;
+                if (usr_p == NULL) {
+                    usr_p = usr_one;
+                    one->list = usr_p;
+                } else {
+                    usr_p->next = usr_one;
+                    usr_p = usr_p->next;
+                }
+                uid_p = uid_p->next;
             }
-            uid_p = uid_p->next;
         }
         rp->next = one;
         rp = rp->next;
@@ -277,7 +281,7 @@ void do_message(char *buf, int n, int fd) {
         do_exit_room(fd, g_room_head, atoi(cmd[1]));
 
     } else if (strcmp(cmd[0], "SEND_MSG") == 0) {
-        // 转发到room中每个用户
+        do_send_msg(fd, cmd[1]);
     } else {
         printf("unknow command!\n");
     }
@@ -314,6 +318,7 @@ char** parse_cmd(char *src, int len) {
             }
         }
     }
+    to_upper(res[0]);
     return res;
 }
 
@@ -374,11 +379,21 @@ void response(int fd, int code, const char *msg) {
 }
 
 void do_signup(int fd, struct user **users, char *name, char *passwd) {
-    if (!check_user(users, g_user_size, name)) {
-        response(fd, 400, "user has exist");
-        return;
+    for (int i=0; i<g_user_size; i++) {
+        if (strncmp(users[i]->name, name, strlen(users[i]->name)) != 0) {
+            response(fd, 400, "user has exist");
+            return;
+        }
     }
-    save_user(users, name, passwd);
+
+    struct user *p = malloc(sizeof(struct user)); 
+    p->id = g_user_size;
+    p->role = p->id == 0 ? 0 : 1;
+    strncpy(p->name, name, strnlen(name, 100));
+    strncpy(p->password, passwd, strnlen(passwd, 100));
+    users[g_user_size] = p;
+    g_user_size++;
+
     response(fd, 200, "SIGN_UP success");
 }
 
@@ -389,25 +404,6 @@ struct user* find_user(struct user **users, int id) {
         }
     }
     return NULL;
-}
-
-int check_user(struct user **users, int len, char *name) {
-    for (int i=0; i<len; i++) {
-        if (strncmp(users[i]->name, name, strlen(users[i]->name)) == 0) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-void save_user(struct user **users, char *name, char *passwd) {
-    struct user *p = malloc(sizeof(struct user)); 
-    p->id = g_user_size;
-    p->role = p->id == 0 ? 0 : 1;
-    strncpy(p->name, name, strnlen(name, 100));
-    strncpy(p->password, passwd, strnlen(passwd, 100));
-    users[g_user_size] = p;
-    g_user_size++;
 }
 
 void show_user(struct user **users, int len) {
@@ -447,6 +443,11 @@ void do_signout(int fd) {
 
     struct client *p = find_client(fd);
     char *name = p->usr->name;
+
+    // 如果正呆在某个room内，则先退出房间
+    if (p->room != NULL) {
+        do_exit_room(fd, g_room_head, p->room->id);
+    }
     p->usr = NULL;
 
     char s[50];
@@ -523,6 +524,13 @@ void do_delete_room(int fd, struct room *head, int room_id) {
         return;
     }
 
+    // 1. 检查权限
+    struct client *cli = find_client(fd);
+    if (cli->usr->role > 0) {
+        response(fd, 400, "Permission denied");
+        return;
+    }
+
     struct room *pre = head;
     struct room *p = head->next;
     while (p) {
@@ -538,6 +546,15 @@ void do_delete_room(int fd, struct room *head, int room_id) {
     if (p == NULL) {
         response(fd, 400, "room id not exist");
         return;
+    }
+
+    // 释放前，先让每个人，退出房间
+    struct client *cp = g_client_head;
+    while (cp) {
+        if (room_id == cp->room->id) {
+            do_exit_room(cp->fd, g_room_head, room_id);
+        }
+        cp = cp->next;
     }
 
     p->list = NULL;
@@ -603,10 +620,21 @@ void gen_user_list_str(struct user_node *head, char *s) {
     }
 }
 
+int get_room_user_count(struct room *room) {
+    int count = 0;
+    struct user_node *p = room->list;
+    while (p) {
+        count++;
+        p = p->next;
+    }
+    return count;
+}
+
 void do_enter_room(int fd, struct room *head, int room_id) {
     if (!check_signin(fd)) {
         return;
     }
+
     char resp[100];
     struct room * p = find_room(head, room_id);
     if (p == NULL) {
@@ -615,7 +643,20 @@ void do_enter_room(int fd, struct room *head, int room_id) {
         return;
     }
 
+    // room is full
+    if (get_room_user_count(p) >= p->limit) {
+        response(fd, 400, "room is full");
+        return;
+    }
+
+    // 只能待在一个room
     struct client *cli = find_client(fd);
+    if (cli->room != NULL) {
+        sprintf(resp, "You stay in %d room, the first must exit the room!", room_id);
+        response(fd, 400, resp);
+        return;
+    }
+
     struct user_node *one = malloc(sizeof(struct user_node));
     one->usr = cli->usr;
     one->next = NULL;
@@ -638,6 +679,10 @@ void do_enter_room(int fd, struct room *head, int room_id) {
         node = node->next;
     }
     pre->next = one; 
+
+    // 因为每个人只能呆在一个room, 所以每次进入房间，就把room保存在client中
+    cli->room = p;
+    
     response(fd, 201,  "enter room success");
 }
 
@@ -646,7 +691,7 @@ void do_exit_room(int fd, struct room *head, int room_id) {
         return;
     }
     struct client *cli = find_client(fd);
-    struct room *r = find_room(head, room_id);
+    struct room *r = cli->room;
     struct user_node *pre = NULL;
     struct user_node *p = r->list;
     while (p) {
@@ -654,7 +699,9 @@ void do_exit_room(int fd, struct room *head, int room_id) {
             if (pre) pre->next = p->next;
             if (p == r->list) r->list = p->next;
             p->next = NULL;
+            cli->room = NULL;
             response(fd, 200, "exit room success");
+            free(p);
             return;
         }
         pre = p;
@@ -671,4 +718,28 @@ struct room* find_room(struct room *head, int room_id) {
         p = p->next;
     }
     return NULL;
+}
+
+void do_send_msg(int fd, char *msg) {
+    if (!check_signin(fd)) {
+        return;
+    }
+
+    // 获取当前所在room
+    struct client *cli = find_client(fd);
+    if (cli == NULL || cli->room == NULL) {
+        response(fd, 400, "You not in room");
+        return;
+    }
+
+    struct client *p = g_client_head->next;
+    while (p) {
+        if (p->room
+            && p->room->id == cli->room->id
+            && p != cli
+            ) {
+            response(p->fd, -1, msg);
+        }
+        p = p->next;
+    }
 }

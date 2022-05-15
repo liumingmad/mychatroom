@@ -24,6 +24,7 @@ struct user
 struct client {
     int fd;
     struct user *usr;
+    struct room *room;
     struct sockaddr_in *addr;
     struct client *next;
 };
