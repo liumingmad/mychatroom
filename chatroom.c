@@ -14,13 +14,19 @@
 #define DEBUG 1
 #define SERV_PORT 8010
 #define MAX_CLIENT_SIZE 100
+#define MAX_USER_SIZE 1000
 #define MAX_BUF_SIZE 100
 // SIGN_UP name passwd    size is 3
 #define MAX_CMD_SIZE 10
 
+// signal
+void handle_signal(int signal);
+
 // 初始化
 int init();
-void handle_signal(int signal);
+struct user ** load_user_from_file(char* path);
+struct user * parse_user(char *line);
+struct room * load_room_from_file(char* path);
 
 // 请求／回复
 int handle_request(int);
@@ -36,12 +42,14 @@ void remove_client(struct client *head, int fd);
 struct client * find_client(int fd);
 
 // 注册/登入/登出
-void do_signup(int fd, struct user *users, char *name, char *passwd);
-int check_user(struct user *users, int len, char *name);
-void save_user(struct user *users, char *name, char *passwd);
-void show_user(struct user *users, int len);
-void do_signin(int fd, struct user *users, char *name, char *passwd);
+void do_signup(int fd, struct user **users, char *name, char *passwd);
+void do_signin(int fd, struct user **users, char *name, char *passwd);
 void do_signout(int fd);
+int check_user(struct user **users, int len, char *name);
+void save_user(struct user **users, char *name, char *passwd);
+void show_user(struct user **users, int len);
+struct user* find_user(struct user **users, int id);
+int check_signin(int fd);
 
 // 创建/删除/显示 room
 void show_room_list(struct room *head);
@@ -51,6 +59,7 @@ void do_list_room(int fd, struct room *head);
 void do_enter_room(int fd, struct room *head, int room_id);
 void do_exit_room(int fd, struct room *head, int room_id);
 struct room* find_room(struct room *head, int room_id);
+void gen_user_list_str(struct user_node *head, char *s);
 
 // 未登录用户链表
 static struct client *g_client_head;
@@ -60,7 +69,7 @@ static int g_room_id = 0; // 自增id
 static struct room *g_room_head;
 
 // user数组
-static struct user g_users[100];
+static struct user **g_users;
 static int g_user_size = 0;
 
 
@@ -134,14 +143,100 @@ int init() {
     c->next = NULL;
     g_client_head = c;
 
+    // user
+    g_users = load_user_from_file("./db/table_user");
+    if (DEBUG) show_user(g_users, g_user_size);
+
     // room_head
+    g_room_head = load_room_from_file("./db/table_room");
+    if (DEBUG) show_room_list(g_room_head);
+}
+
+struct user ** load_user_from_file(char* path) {
+    struct user **arr = malloc(MAX_USER_SIZE * sizeof(struct user*));
+    FILE *f = fopen(path, "r");
+    int MAX_LEN = 1024; 
+    char line[MAX_LEN];
+    bzero(line, MAX_LEN);
+    while (fgets(line, MAX_LEN, f) != NULL) {
+        // 去掉末尾的换行
+        line[strnlen(line, MAX_LEN)+1-2] = '\0';
+        arr[g_user_size++] = parse_user(line);
+    }
+    return arr;
+}
+
+struct user * parse_user(char *line) {
+    struct Node *head = split(line, ';'); 
+
+    // to user
+    struct user *one = malloc(sizeof(struct user));
+    struct Node *p = head;
+    one->id = atoi(p->str);
+    p = p->next;
+    one->role = atoi(p->str);
+    p = p->next;
+    strncpy(one->name, p->str, strlen(p->str));
+    p = p->next;
+    strncpy(one->password, p->str, strlen(p->str));
+    
+    // free head
+    free_split(head);
+
+    return one;
+}
+
+
+struct room * load_room_from_file(char* path) {
     struct room *r = malloc(sizeof(struct room));
     r->id = -1;
     r->next = NULL;
-    g_room_head = r;
 
-    // user
-    g_user_size = 0;
+    struct room *rp = r;
+
+    // 0;fuckroom;5;0,1,2,3
+    FILE *f = fopen(path, "r");
+    int MAX_LEN = 1024; 
+    char line[MAX_LEN];
+    bzero(line, MAX_LEN);
+    while (fgets(line, MAX_LEN, f)) {
+        // 去掉末尾的换行
+        line[strnlen(line, MAX_LEN)+1-2] = '\0';
+        struct Node *head = split(line, ';'); 
+        struct room *one = malloc(sizeof(struct room));
+        struct Node *p = head;
+        // id
+        one->id = atoi(p->str);
+        if (one->id >= g_room_id) {
+            g_room_id = one->id + 1;
+        }
+        p = p->next;
+        // name
+        strncpy(one->name, p->str, strlen(p->str));
+        p = p->next;
+        // limit
+        one->limit = atoi(p->str);
+        p = p->next;
+        // user list
+        struct user_node *usr_p = NULL;
+        struct Node *uid_p = split(p->str, ',');
+        while (uid_p) {
+            struct user_node *usr_one = malloc(sizeof(struct user_node));
+            usr_one->usr = find_user(g_users, atoi(uid_p->str)); 
+            usr_one->next = NULL;
+            if (usr_p == NULL) {
+                usr_p = usr_one;
+                one->list = usr_p;
+            } else {
+                usr_p->next = usr_one;
+                usr_p = usr_p->next;
+            }
+            uid_p = uid_p->next;
+        }
+        rp->next = one;
+        rp = rp->next;
+    }
+    return r;
 }
 
 void handle_signal(int signal) {
@@ -278,7 +373,7 @@ void response(int fd, int code, const char *msg) {
     Write(fd, s, strlen(s));
 }
 
-void do_signup(int fd, struct user *users, char *name, char *passwd) {
+void do_signup(int fd, struct user **users, char *name, char *passwd) {
     if (!check_user(users, g_user_size, name)) {
         response(fd, 400, "user has exist");
         return;
@@ -287,34 +382,44 @@ void do_signup(int fd, struct user *users, char *name, char *passwd) {
     response(fd, 200, "SIGN_UP success");
 }
 
-int check_user(struct user *users, int len, char *name) {
+struct user* find_user(struct user **users, int id) {
+    for (int i=0; i<g_user_size; i++) {
+        if (users[i]->id == id) {
+            return users[i];
+        }
+    }
+    return NULL;
+}
+
+int check_user(struct user **users, int len, char *name) {
     for (int i=0; i<len; i++) {
-        if (strncmp(users->name, name, strlen(users->name)) == 0) {
+        if (strncmp(users[i]->name, name, strlen(users[i]->name)) == 0) {
             return 0;
         }
     }
     return 1;
 }
 
-void save_user(struct user *users, char *name, char *passwd) {
-    struct user *p = users + g_user_size; 
+void save_user(struct user **users, char *name, char *passwd) {
+    struct user *p = malloc(sizeof(struct user)); 
     p->id = g_user_size;
+    p->role = p->id == 0 ? 0 : 1;
     strncpy(p->name, name, strnlen(name, 100));
     strncpy(p->password, passwd, strnlen(passwd, 100));
-    p->role = p->id == 0 ? 0 : 1;
+    users[g_user_size] = p;
     g_user_size++;
 }
 
-void show_user(struct user *users, int len) {
+void show_user(struct user **users, int len) {
     for (int i=0; i<len; i++) {
-        printf("%d %s %s\n", users[i].id, users[i].name, users[i].password);
+        printf("%d %d %s %s\n", users[i]->id, users[i]->role, users[i]->name, users[i]->password);
     }
 }
 
-void do_signin(int fd, struct user *users, char *name, char *passwd) {
+void do_signin(int fd, struct user **users, char *name, char *passwd) {
     char resp_str[100];
     for (int i=0; i<g_user_size; i++) {
-        struct user *p = &users[i];
+        struct user *p = users[i];
         if (strncmp(name, p->name, strlen(p->name)) == 0) {
             if (strncmp(passwd, p->password, strlen(p->password)) == 0) {
                 struct client *cli = find_client(fd);
@@ -336,23 +441,32 @@ void do_signin(int fd, struct user *users, char *name, char *passwd) {
 }
 
 void do_signout(int fd) {
+    if (!check_signin(fd)) {
+        return;
+    }
+
     struct client *p = find_client(fd);
-    if (p == NULL) {
-        response(fd, 500, "No connection");
-        return;
-    }
-
-    if (p->usr == NULL) {
-        response(fd, 401, "Not sign in.");
-        return;
-    }
-
     char *name = p->usr->name;
     p->usr = NULL;
 
     char s[50];
     sprintf(s, "Goodbye %s", name);
     response(fd, 200, s); 
+}
+
+int check_signin(int fd) {
+    struct client *p = find_client(fd);
+    if (p == NULL) {
+        response(fd, 500, "No connection");
+        return 0;
+    }
+
+    if (p->usr == NULL) {
+        response(fd, 401, "Not sign in.");
+        return 0;
+    }
+
+    return 1;
 }
 
 struct client * find_client(int fd) {
@@ -362,6 +476,10 @@ struct client * find_client(int fd) {
 }
 
 void do_create_room(int fd, struct room *head, char *name, int limit) {
+    if (!check_signin(fd)) {
+        return;
+    }
+
     // 1. 检查权限
     struct client *cli = find_client(fd);
     if (cli->usr->role > 0) {
@@ -401,6 +519,10 @@ void do_create_room(int fd, struct room *head, char *name, int limit) {
 }
 
 void do_delete_room(int fd, struct room *head, int room_id) {
+    if (!check_signin(fd)) {
+        return;
+    }
+
     struct room *pre = head;
     struct room *p = head->next;
     while (p) {
@@ -426,6 +548,7 @@ void do_delete_room(int fd, struct room *head, int room_id) {
 }
 
 void show_room_list(struct room *head) {
+
     struct room *p = head->next;
     while (p) {
         printf("%d %s %d \n", p->id, p->name, p->limit);
@@ -450,20 +573,40 @@ int get_room_list_size(struct room *head) {
 }
 
 void do_list_room(int fd, struct room *head) {
+    if (!check_signin(fd)) {
+        return;
+    }
     char* buf = malloc(1024);
     bzero(buf, 1024);
     char* s = buf;
     struct room *p = head->next; 
     while (p) {
-        int len = sprintf(s, "%d %s %d\n", p->id, p->name, p->limit);
+        char ul[200];
+        bzero(ul, 200);
+        gen_user_list_str(p->list, ul);
+        int len = sprintf(s, "%d %s %d\n%s", p->id, p->name, p->limit, ul);
         s += len;
         p = p->next;
     }
+
+
     response(fd, -1, buf);
     free(buf);
 }
 
+void gen_user_list_str(struct user_node *head, char *s) {
+    struct user_node *u = head;
+    while (u) {
+        int size = sprintf(s, "\t(%s)\n", u->usr->name);
+        s += size;
+        u = u->next;
+    }
+}
+
 void do_enter_room(int fd, struct room *head, int room_id) {
+    if (!check_signin(fd)) {
+        return;
+    }
     char resp[100];
     struct room * p = find_room(head, room_id);
     if (p == NULL) {
@@ -495,10 +638,13 @@ void do_enter_room(int fd, struct room *head, int room_id) {
         node = node->next;
     }
     pre->next = one; 
-    response(fd, 200, "");
+    response(fd, 201,  "enter room success");
 }
 
 void do_exit_room(int fd, struct room *head, int room_id) {
+    if (!check_signin(fd)) {
+        return;
+    }
     struct client *cli = find_client(fd);
     struct room *r = find_room(head, room_id);
     struct user_node *pre = NULL;
@@ -506,6 +652,7 @@ void do_exit_room(int fd, struct room *head, int room_id) {
     while (p) {
         if (p->usr->id == cli->usr->id) {
             if (pre) pre->next = p->next;
+            if (p == r->list) r->list = p->next;
             p->next = NULL;
             response(fd, 200, "exit room success");
             return;
