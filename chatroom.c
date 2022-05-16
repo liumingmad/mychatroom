@@ -664,6 +664,7 @@ void do_enter_room(int fd, struct room *head, int room_id) {
     // no body in room
     if (p->list == NULL) {
         p->list = one;
+        cli->room = p;
         response(fd, 200,  "enter room success");
         return;
     }
@@ -734,10 +735,7 @@ void do_send_msg(int fd, char *msg) {
 
     struct client *p = g_client_head->next;
     while (p) {
-        if (p->room
-            && p->room->id == cli->room->id
-            && p != cli
-            ) {
+        if (p->room && p->room->id == cli->room->id) {
             response(p->fd, -1, msg);
         }
         p = p->next;
